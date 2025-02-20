@@ -8,103 +8,81 @@ class SemanticSteve {
             port: options.port || 25565,
             username: options.username || 'SemanticSteve'
         });
+        this.commandQueue = new CommandQueue();
+        this.pathfindingModule = new PathfindingModule(this.bot);
+        this.combatModule = new CombatModule(this.bot);
+        this.selfDefenseModule = new SelfDefenseModule(this.bot, this.combatModule);
 
-        this.hostileMobs = [
+        // Set up event handlers, etc.
+        this.setupEventHandlers();
+    }
+    
+    setupEventHandlers() {
+        this.bot.once('spawn', () => {
+            console.log(`${this.bot.username} has joined the world!`);
+            // Further initialization...
+            this.startMonitoring();
+        });
+        // Listen for chat commands, health events, etc.
+    }
+    
+    startMonitoring() {
+        // Regularly check for hostile mobs (could also be an event-based system)
+        setInterval(() => {
+            const mobs = this.scanForHostileMobs();
+            if (mobs.length > 0) {
+                this.bot.emit('hostileMobDetected', mobs);
+            }
+        }, 5000);
+    }
+    
+    scanForHostileMobs() {
+        // Implementation similar to earlier examples filtering hostile entities
+        return Object.values(this.bot.entities).filter(entity =>
+            entity.type === 'mob' && this.isHostile(entity)
+        );
+    }
+    
+    isHostile(entity) {
+        const hostileMobs = [
             'zombie', 'skeleton', 'creeper', 'spider', 'witch', 'enderman',
             'slime', 'blaze', 'ghast', 'phantom', 'pillager', 'vindicator',
             'evoker', 'ravager', 'piglin', 'hoglin', 'zombified_piglin'
         ];
-
-        this.bot.loadPlugin(pathfinder);
-        this.setupEventHandlers();
+        return hostileMobs.includes(entity.name);
     }
 
-    setupEventHandlers() {
-        this.bot.once('spawn', () => {
-            console.log(`${this.bot.username} has joined the world!`);
-            this.setupPathfinder();
-            this.startMonitoring();
-        });
-
-        this.bot.on('chat', (username, message) => this.handleChat(username, message));
-        this.bot.on('health', () => this.monitorHealth());
-        this.bot.on('death', () => console.log(`${this.bot.username} died!`));
-        this.bot.on('error', err => console.error(`Error: ${err}`));
-    }
-
-    setupPathfinder() {
-        const movements = new Movements(this.bot);
-        this.bot.pathfinder.setMovements(movements);
-    }
-
-    startMonitoring() {
-        setInterval(() => this.checkForHostileMobs(), 5000);
-    }
-
-    checkForHostileMobs() {
-        const mobs = Object.values(this.bot.entities).filter(entity =>
-            entity.type === 'mob' && this.hostileMobs.includes(entity.name)
-        );
-
-        if (mobs.length > 0) {
-            console.log(`⚠️ Detected ${mobs.length} hostile mob(s)!`);
-            this.handleHostileMobs(mobs);
+    handleNaturalLanguageCommand(text) {
+        const nlp = require('./nlp/NaturalLanguageProcessor');
+        const commandData = nlp.parse(text);
+        let command;
+      
+        // Map the parsed command to a corresponding command class
+        switch (commandData.commandName) {
+          case 'move': {
+            const MoveCommand = require('./commands/MoveCommand');
+            // Assume commandData.args[0] holds target coordinates
+            command = new MoveCommand(this.bot, commandData.args[0]);
+            break;
+          }
+          case 'attack': {
+            const AttackCommand = require('./commands/AttackCommand');
+            // Assume commandData.args[0] holds target mob info
+            command = new AttackCommand(this.bot, commandData.args[0]);
+            break;
+          }
+          case 'status': {
+            // Example: use an inline command for reporting status
+            command = { execute: async () => this.reportStatus() };
+            break;
+          }
+          default:
+            console.log("Unknown command:", text);
+            return;
         }
-    }
-
-    handleHostileMobs(mobs) {
-        for (const mob of mobs) {
-            console.log(`Handling ${mob.name} at ${mob.position}`);
-
-            if (mob.name === 'creeper') {
-                this.avoidMob(mob);
-            } else if (mob.name === 'zombie' || mob.name === 'skeleton') {
-                this.attackMob(mob);
-            }
-        }
-    }
-
-    avoidMob(mob) {
-        const awayVector = this.bot.entity.position.minus(mob.position).scaled(2);
-        const safePosition = this.bot.entity.position.plus(awayVector);
-        this.bot.pathfinder.setGoal(new goals.GoalBlock(safePosition.x, safePosition.y, safePosition.z));
-        console.log('🟢 Moving away from Creeper!');
-    }
-
-    attackMob(mob) {
-        if (this.bot.canSeeBlock(mob.position)) {
-            this.bot.attack(mob);
-            console.log(`⚔️ Attacking ${mob.name}!`);
-        }
-    }
-
-    handleChat(username, message) {
-        if (username === this.bot.username) return;
-        console.log(`${username}: ${message}`);
-
-        if (message.toLowerCase() === 'hi') {
-            this.bot.chat(`Hello ${username}!`);
-        } else if (message.toLowerCase() === 'status') {
-            this.reportStatus();
-        }
-    }
-
-    reportStatus() {
-        const health = this.bot.health.toFixed(1);
-        const food = this.bot.food.toFixed(1);
-        this.bot.chat(`Health: ${health}, Hunger: ${food}`);
-    }
-
-    monitorHealth() {
-        if (this.bot.health < 10) {
-            console.log('⚠️ Low health detected! Finding safety...');
-        }
-    }
+      
+        // Enqueue the resolved command for execution
+        this.commandQueue.enqueue(command);
+      }
 }
 
-// Start the bot
-new SemanticSteve({
-    host: 'localhost', 
-    port: 25565, 
-    username: 'SemanticSteve'
-});
